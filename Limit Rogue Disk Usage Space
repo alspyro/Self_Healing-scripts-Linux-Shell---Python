@@ -1,0 +1,29 @@
+Bash
+
+#!/bin/bash
+
+# Configuration
+DISK_USAGE_THRESHOLD=90
+LOG_DIR="/var/log"
+DAYS_TO_KEEP=7
+
+# Check current disk usage
+CURRENT_USAGE=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
+
+if [ "$CURRENT_USAGE" -ge "$DISK_USAGE_THRESHOLD" ]; then
+    echo "Disk usage is at $CURRENT_USAGE%. Starting log cleanup in $LOG_DIR..."
+
+    # Find and delete files [older than $_ days]
+    find "$LOG_DIR" -type f -name "*.log" -mtime +"$DAYS_TO_KEEP" -exec rm -f {} \;
+
+    # Re-check usage
+    NEW_USAGE=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
+
+    if [ "$NEW_USAGE" -lt "$CURRENT_USAGE" ]; then
+        echo "Disk usage reduced from $CURRENT_USAGE% to $NEW_USAGE%."
+    else
+        echo "Log cleanup completed, warning for high usage at $NEW_USAGE%."
+    fi
+else
+    echo "Disk usage is healthy at $CURRENT_USAGE%. No remediation needed."
+fi
