@@ -1,0 +1,29 @@
+Bash
+
+#!/bin/bash
+
+SERVICE_NAME="httpd"
+
+# Check if the service is active
+systemctl is-active --quiet "$SERVICE_NAME"
+
+if [ $? -ne 0 ]; then
+    echo "$SERVICE_NAME is stopped or failed. Attempting restart..."
+
+    # Attempt to restart the service
+    systemctl restart "$SERVICE_NAME"
+
+    # Wait a few seconds for the service to come up
+    sleep 5
+
+    # Check status again
+    systemctl is-active --quiet "$SERVICE_NAME"
+    if [ $? -eq 0 ]; then
+        echo "$SERVICE_NAME successfully restarted."
+    else
+        echo "Failed to restart $SERVICE_NAME. Further investigation is required."
+        # Optionally, add a notification/alert mechanism here
+    fi
+else
+    echo "$SERVICE_NAME is running smoothly."
+fi
