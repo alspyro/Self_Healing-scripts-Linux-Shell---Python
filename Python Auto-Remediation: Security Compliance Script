@@ -1,0 +1,122 @@
+Python
+
+import os
+import stat
+import subprocess
+import logging
+
+# --- Configuration ---
+LOG_FILE = "/var/log/security_remediation.log"
+CRITICAL_FILES = {
+    "/etc/passwd": 0o644,  # Recommended max: 644 (user read/write, group/other read)
+    "/etc/shadow": 0o000,  # Recommended max: 000 (only root should access)
+    "/etc/ssh/sshd_config": 0o600, # Recommended max: 600 (only root read/write)
+}
+REQUIRED_SERVICE = "fail2ban"
+
+# Setup logging
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)
+logging.getLogger('').addHandler(console)
+
+def check_and_remediate_permissions():
+    """Checks and fixes insecure file permissions."""
+    logging.info("Starting file permission security checks...")
+
+    for file_path, max_perms in CRITICAL_FILES.items():
+        if not os.path.exists(file_path):
+            logging.warning(f"File not found: {file_path}")
+            continue
+
+        # Get current permissions (mode)
+        current_mode = os.stat(file_path).st_mode
+        # Extract the last 3 octal digits (rwx permissions)
+        current_perms = stat.S_IMODE(current_mode)
+        
+        # Check if current permissions are too permissive (greater than max_perms)
+        # Note: A stricter check might be current_perms != max_perms
+        if current_perms > max_perms:
+            logging.warning(
+                f"Insecure permissions detected on {file_path}. Current: {oct(current_perms)}, Max Recommended: {oct(max_perms)}"
+            )
+            
+            # --- Self-Healing Action ---
+            try:
+                # Use os.chmod to set the secure permission
+                os.chmod(file_path, max_perms)
+                logging.info(f"Remediation applied: Permissions of {file_path} set to {oct(max_perms)}.")
+            except PermissionError:
+                logging.error(f"Failed to remediate {file_path}: Permission denied (run as root).")
+            except Exception as e:
+                logging.error(f"An unexpected error occurred while fixing {file_path}: {e}")
+        else:
+            logging.info(f"{file_path} permissions are compliant: {oct(current_perms)}")
+
+def check_and_remediate_service():
+    """Checks for a critical security service and ensures it's running."""
+    logging.info(f"\nStarting security service check for {REQUIRED_SERVICE}...")
+
+    # Check if the service is active using systemctl
+    try:
+        # Check if service is active and running
+        subprocess.run(
+            ['systemctl', 'is-active', '--quiet', REQUIRED_SERVICE],
+            check=True,
+            capture_output=True
+        )
+        logging.info(f"{REQUIRED_SERVICE} is installed and running.")
+        return
+
+    except subprocess.CalledProcessError:
+        # The service is not active (might be stopped or failed)
+        logging.warning(f"{REQUIRED_SERVICE} service is not active. Attempting to start/install...")
+        
+        # --- Self-Healing Action: Start/Install ---
+        
+        # 1. Attempt to start the service (if it's just stopped)
+        try:
+            subprocess.run(['systemctl', 'start', REQUIRED_SERVICE], check=True, timeout=10)
+            logging.info(f"Started {REQUIRED_SERVICE}. Checking status again...")
+            
+            # Re-check status
+            subprocess.run(['systemctl', 'is-active', '--quiet', REQUIRED_SERVICE], check=True)
+            logging.info(f"{REQUIRED_SERVICE} is now running.")
+            return
+            
+        except subprocess.CalledProcessError:
+            logging.warning(f"Failed to start {REQUIRED_SERVICE}. It might not be installed.")
+        except FileNotFoundError:
+             # systemctl not found, or a package like fail2ban is missing on some OSes
+             logging.error("systemctl command not found or issue with service path.")
+
+
+        # 2. **Fallback:** Attempt to install the package (requires root/sudo)
+        logging.info(f"Attempting to install {REQUIRED_SERVICE} via apt (requires root/sudo)...")
+        try:
+            # Note: This is a powerful, potentially disruptive action.
+            install_cmd = ['apt', 'install', '-y', REQUIRED_SERVICE] 
+            
+            # You might replace 'apt' with 'yum' or 'dnf' depending on the Linux distribution
+            subprocess.run(install_cmd, check=True, timeout=60)
+            
+            # Start and enable the service after installation
+            subprocess.run(['systemctl', 'enable', REQUIRED_SERVICE], check=True)
+            subprocess.run(['systemctl', 'start', REQUIRED_SERVICE], check=True)
+            logging.info(f"Successfully installed and started {REQUIRED_SERVICE}.")
+            
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Failed to install/start {REQUIRED_SERVICE}. Check logs for permissions/package issues.")
+            logging.error(f"Error details: {e.stderr.decode().strip()}")
+        except FileNotFoundError:
+            logging.error("Package manager (apt) not found. Cannot proceed with installation.")
+
+
+if __name__ == "__main__":
+    check_and_remediate_permissions()
+    check_and_remediate_service()
+    logging.info("\nSecurity remediation script complete.")
